@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Html5Qrcode } from 'html5-qrcode';
 import { 
   BookOpen, 
   Users, 
@@ -117,6 +118,85 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [expandedQr, setExpandedQr] = useState<'enrollment' | 'token' | null>(null);
+
+  // Real Camera Scanner states
+  const [cameraPermissionError, setCameraPermissionError] = useState<string | null>(null);
+  const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+
+  // Real Camera Scanner hook
+  useEffect(() => {
+    if (role !== 'student' || !currentStudent || hasAlreadyCheckedIn || scanStatus.type === 'success') {
+      return;
+    }
+
+    const containerId = "qr-reader-container";
+    let html5QrCode: Html5Qrcode | null = null;
+    let isStarted = false;
+
+    // Small delay to ensure the container div is fully rendered in DOM
+    const startTimeout = setTimeout(() => {
+      const element = document.getElementById(containerId);
+      if (!element) return;
+
+      try {
+        html5QrCode = new Html5Qrcode(containerId);
+        html5QrCode.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: (width, height) => {
+              const size = Math.min(width, height) * 0.7;
+              return { width: Math.max(160, size), height: Math.max(160, size) };
+            }
+          },
+          (decodedText) => {
+            console.log("Scanned successfully:", decodedText);
+            // Check if the decoded link is a full URL or just the code
+            let tokenValue = decodedText;
+            try {
+              // If student accidentally scanned QR 1 instead of QR 2, handle gracefully
+              if (decodedText.includes("mode=apresentacao_aluno")) {
+                const urlObj = new URL(decodedText);
+                const roomParam = urlObj.searchParams.get("room");
+                if (roomParam) {
+                  alert(`Você escaneou o QR Code do Cadastro (Passo 1).\nPor favor, aponte para o QR Code de Validação (Passo 2) com o código de 10 segundos!`);
+                  return;
+                }
+              }
+            } catch (e) {}
+
+            handleScanOrSubmitCode(tokenValue);
+          },
+          () => {
+            // silent scan fail for noisy frames
+          }
+        ).then(() => {
+          isStarted = true;
+          setIsCameraActive(true);
+          setCameraPermissionError(null);
+        }).catch((err) => {
+          console.warn("Camera start failed:", err);
+          setCameraPermissionError("Não foi possível acessar a câmera do aparelho. Conceda permissão ou insira o código manualmente.");
+          setIsCameraActive(false);
+        });
+      } catch (e) {
+        console.error("Html5Qrcode init error:", e);
+      }
+    }, 400);
+
+    return () => {
+      clearTimeout(startTimeout);
+      if (html5QrCode) {
+        if (isStarted) {
+          html5QrCode.stop().then(() => {
+            setIsCameraActive(false);
+          }).catch(err => {
+            console.warn("Failed to stop camera:", err);
+          });
+        }
+      }
+    };
+  }, [role, currentStudent, hasAlreadyCheckedIn, scanStatus.type]);
 
   // Dynamic Room Code that maps the cross-device Cloud Sync room to prevent data separation on headless serverless deploys (like Vercel)
   const [roomCode] = useState<string>(() => {
@@ -448,7 +528,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
             if (savedSlides) setSlides(JSON.parse(savedSlides));
             if (savedActiveIndex !== null) setActiveSlideIndex(Number(savedActiveIndex));
           } catch (storageErr) {
-            console.warn("Storage fallback failed too", storageErr);
+            console.warn(storageErr);
           }
         }
       }
@@ -468,7 +548,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
     const interval = setInterval(() => {
       setTimeLeftMs((prev) => {
         if (prev <= 100) {
-          if (isServerOffline) {
+          if (isServerOffline && role === 'presenter') {
             // Generate a brand new token client-side with 10s rotation as fallback!
             const chars = "ABCDEFGHJKLMNOPQRSTUVWXYZ23456789"; 
             let code = "LIVE-";
@@ -1480,7 +1560,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
 
               <div className="text-[9px] text-slate-400 flex items-center justify-center gap-1.5 font-medium">
                 <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-                <span>Conexão ativa e sincronizada em tempo real</span>
+                <span>Conexão active e sincronizada em tempo real</span>
               </div>
             </div>
           ) : (
@@ -1505,24 +1585,43 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
                 </div>
               </div>
 
-              {/* SIMULATED CAMERA VIEWPORTS */}
-              <div className="relative rounded-2xl bg-black overflow-hidden h-44 flex flex-col items-center justify-center text-center text-white border-2 border-slate-900">
-                
-                {/* Simulated retro scan grid overlay */}
-                <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-500/10 to-transparent animate-pulse select-none pointer-events-none"></div>
-                <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-blue-500 shadow-md shadow-blue-500/55 animate-bounce select-none pointer-events-none"></div>
+              {/* REAL CAMERA SCANNER */}
+              <div className="relative rounded-2xl bg-[#070b13] overflow-hidden min-h-[220px] flex flex-col items-center justify-center text-center text-white border-2 border-slate-800">
+                {/* HTML5 QR Code element target */}
+                <div id="qr-reader-container" className="w-full h-full min-h-[200px]" />
 
-                <Camera className="w-8 h-8 text-blue-400 opacity-65 mb-2 animate-pulse" />
-                <h4 className="text-xs font-black">Câmera Ativada</h4>
-                <p className="text-[10px] text-slate-400 max-w-[240px] leading-relaxed mx-auto">
-                  Aponte o celular para o <strong>QR Code 2</strong> rotativo do projetor do professor para colher a presença automaticamente.
-                </p>
+                {/* Overlay while loading / starting camera */}
+                {!isCameraActive && !cameraPermissionError && (
+                  <div className="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center p-4">
+                    <RefreshCw className="w-8 h-8 text-[#0066ff] animate-spin mb-2" />
+                    <h5 className="text-xs font-bold">Iniciando Scanner de Câmera...</h5>
+                  </div>
+                )}
 
-                {/* Corners of a real camera visor */}
-                <div className="absolute top-4 left-4 w-4 h-4 border-t-2 border-l-2 border-blue-500 rounded-tl-sm pointer-events-none"></div>
-                <div className="absolute top-4 right-4 w-4 h-4 border-t-2 border-r-2 border-blue-500 rounded-tr-sm pointer-events-none"></div>
-                <div className="absolute bottom-4 left-4 w-4 h-4 border-b-2 border-l-2 border-blue-500 rounded-bl-sm pointer-events-none"></div>
-                <div className="absolute bottom-4 right-4 w-4 h-4 border-b-2 border-r-2 border-blue-500 rounded-br-sm pointer-events-none"></div>
+                {/* Permission or start error state */}
+                {cameraPermissionError && (
+                  <div className="absolute inset-0 bg-[#0f1422] flex flex-col items-center justify-center p-4 text-center">
+                    <Camera className="w-8 h-8 text-red-500 mb-2" />
+                    <h5 className="text-xs font-bold text-red-400">Scanner de Câmera Indisponível</h5>
+                    <p className="text-[10px] text-slate-400 mt-1.5 max-w-[250px] leading-tight">
+                      {cameraPermissionError}
+                    </p>
+                  </div>
+                )}
+
+                {/* Laser scan animation when camera is running */}
+                {isCameraActive && (
+                  <>
+                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#0066ff]/5 to-transparent select-none pointer-events-none"></div>
+                    <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-[#0066ff] shadow-md shadow-blue-500/50 animate-bounce select-none pointer-events-none"></div>
+                    
+                    {/* Corners structure */}
+                    <div className="absolute top-4 left-4 w-4 h-4 border-t-2 border-l-2 border-[#0066ff] rounded-tl-sm pointer-events-none"></div>
+                    <div className="absolute top-4 right-4 w-4 h-4 border-t-2 border-r-2 border-[#0066ff] rounded-tr-sm pointer-events-none"></div>
+                    <div className="absolute bottom-4 left-4 w-4 h-4 border-b-2 border-l-2 border-[#0066ff] rounded-bl-sm pointer-events-none"></div>
+                    <div className="absolute bottom-4 right-4 w-4 h-4 border-b-2 border-r-2 border-[#0066ff] rounded-br-sm pointer-events-none"></div>
+                  </>
+                )}
               </div>
 
               {/* NOTIFICATION BARS */}
@@ -1648,8 +1747,6 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
           </div>
         </div>
       )}
-
-
 
     </div>
   );

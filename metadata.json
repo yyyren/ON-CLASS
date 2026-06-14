@@ -1,0 +1,6 @@
+{
+  "name": "OnClass Test",
+  "description": "Plataforma acadêmica para gerenciamento de turmas, relatórios de presença e chamadas em tempo real com QR Code dinâmico.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -338,7 +338,8 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
           activeToken,
           activeSlideIndex,
           students: [],
-          attendances: []
+          attendances: [],
+          slides
         };
         cloudState.slides = tempSlides;
         cloudState.lastUpdated = Date.now();
@@ -415,7 +416,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
     }
   };
 
-  // Auto-derived deep student link
+  // Auto-derived student link
   const getStudentShareUrl = () => {
     const origin = window.location.origin + window.location.pathname;
     return `${origin}?mode=apresentacao_aluno&room=${roomCode}`;
@@ -478,6 +479,9 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
               setActiveToken(cloudState.activeToken);
               localStorage.setItem('onclass_pres_active_token', cloudState.activeToken);
             }
+            if (cloudState.previousToken) {
+              localStorage.setItem('onclass_pres_previous_token', cloudState.previousToken);
+            }
             if (cloudState.students) {
               setStudents(cloudState.students);
               localStorage.setItem('onclass_pres_students', JSON.stringify(cloudState.students));
@@ -528,7 +532,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
             if (savedSlides) setSlides(JSON.parse(savedSlides));
             if (savedActiveIndex !== null) setActiveSlideIndex(Number(savedActiveIndex));
           } catch (storageErr) {
-            console.warn(storageErr);
+            console.warn("Storage fallback failed too", storageErr);
           }
         }
       }
@@ -562,6 +566,9 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
             try {
               fetchCloudKVState(roomCode).then((cloudState) => {
                 if (cloudState) {
+                  const currentActive = cloudState.activeToken || 'LIVE-ON95';
+                  localStorage.setItem('onclass_pres_previous_token', currentActive);
+                  cloudState.previousToken = currentActive;
                   cloudState.activeToken = code;
                   cloudState.lastUpdated = Date.now();
                   writeCloudKVState(roomCode, cloudState);
@@ -661,7 +668,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
     }
   };
 
-  // Handle student scanning/submitting 4-digit code
+  // Handle student scanning/submitting code
   const handleScanOrSubmitCode = async (codeToSubmit: string) => {
     if (!currentStudent) return;
     if (hasAlreadyCheckedIn) {
@@ -717,7 +724,8 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
         };
 
         const currentTokenStored = cloudState.activeToken || 'LIVE-ON95';
-        const isTokenValid = upperToken === currentTokenStored || upperToken === 'LIVE-ON95';
+        const previousTokenStored = cloudState.previousToken || localStorage.getItem('onclass_pres_previous_token') || '';
+        const isTokenValid = upperToken === currentTokenStored || upperToken === previousTokenStored || upperToken === 'LIVE-ON95';
 
         if (!isTokenValid) {
           setScanStatus({ 
@@ -769,7 +777,8 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
         
         // Offline absolute fallback
         const currentTokenStored = localStorage.getItem('onclass_pres_active_token') || 'LIVE-ON95';
-        const isTokenValid = upperToken === currentTokenStored || upperToken === 'LIVE-ON95';
+        const previousTokenStored = localStorage.getItem('onclass_pres_previous_token') || '';
+        const isTokenValid = upperToken === currentTokenStored || upperToken === previousTokenStored || upperToken === 'LIVE-ON95';
 
         if (!isTokenValid) {
           setScanStatus({ 
@@ -851,7 +860,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
     }
 
     setActiveNotification("✨ Simulação reiniciada com sucesso!");
-    setTimeout(() => setActiveNotification(null), 3000);
+    setTimeout(() => setActiveNotification(null), 3550);
   };
 
   // Demo Student Generator
@@ -1055,8 +1064,6 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
           {/* LEFT CARDS: STEP 1 (SIGNUP QR) & STEP 2 (ATTENDANCE DYNAMIC QR) */}
           <div className="col-span-1 lg:col-span-2 space-y-6">
             
-
-
             {/* QR 1: ENROLLMENT PORTAL */}
             <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col items-center text-center space-y-4">
               <div className="absolute top-0 left-0 bg-[#0066ff] text-white px-3 py-1 rounded-br-xl text-[9px] font-bold tracking-wider uppercase">
@@ -1124,380 +1131,362 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
                   />
                   
                   {/* Rotating code representation */}
-                  <div className="mt-2 bg-[#10b981] text-white px-4 py-1 rounded-xl font-mono text-sm font-extrabold tracking-widest shadow-xs">
-                    {activeToken}
+                  <div className="mt-2 bg-[#10b981] text-white px-5 py-1.5 rounded-xl font-mono text-base font-black tracking-widest flex items-center gap-2 select-all shadow-md">
+                    <span>{activeToken}</span>
                   </div>
 
                   <button
                     type="button"
                     onClick={() => setExpandedQr('token')}
-                    className="mt-2 text-[10px] text-teal-800 hover:text-teal-950 font-bold flex items-center justify-center gap-1.5 cursor-pointer bg-emerald-50 hover:bg-emerald-100 py-1.5 px-3 rounded-lg border border-emerald-100 transition-colors w-full"
+                    className="mt-2 text-[10px] text-[#10b981] hover:text-[#0b7d55] font-bold flex items-center justify-center gap-1.5 cursor-pointer bg-emerald-50/50 hover:bg-emerald-50 py-1.5 px-3.5 rounded-lg border border-emerald-100 transition-colors w-full"
                   >
                     <Maximize2 className="w-3.5 h-3.5" />
-                    <span>Ampliar QR Code</span>
+                    <span>Ampliar QR Code 2</span>
                   </button>
                 </div>
 
-                {/* Progress count-down circle in overlay */}
-                <div className="absolute -top-3.5 -right-3.5 bg-white p-2 border border-slate-100 rounded-full shadow-lg flex items-center justify-center">
-                  <svg className="w-10 h-10 select-none -rotate-90">
+                {/* Circular timer indicator */}
+                <div className="absolute -top-3 -right-3 bg-white w-10 h-10 rounded-full shadow-md border border-slate-100 flex items-center justify-center">
+                  <svg className="w-8 h-8 transform -rotate-95">
                     <circle
-                      cx="20"
-                      cy="20"
-                      r="15"
-                      className="text-slate-100 stroke-current"
-                      strokeWidth="3.5"
+                      cx="16"
+                      cy="16"
+                      r="12"
+                      className="text-slate-100"
+                      strokeWidth="2.5"
                       fill="transparent"
+                      stroke="currentColor"
                     />
                     <circle
-                      cx="20"
-                      cy="20"
-                      r="15"
-                      className="text-emerald-500 stroke-current transition-all duration-100"
-                      strokeWidth="3.5"
+                      cx="16"
+                      cy="16"
+                      r="12"
+                      className="text-[#10b981] transition-all duration-100 ease-linear"
+                      strokeWidth="2.5"
                       fill="transparent"
-                      strokeDasharray="283"
-                      strokeDashoffset={strokeDashoffset}
+                      stroke="currentColor"
+                      strokeDasharray="75.3"
+                      strokeDashoffset={(timeLeftMs / 10000) * 75.3}
                     />
                   </svg>
-                  <span className="absolute text-[9px] font-black text-slate-700">
-                    {Math.ceil(timeLeftMs / 1000)}s
+                  <span className="absolute text-[10px] font-black text-slate-700 select-none">
+                    {Math.ceil(timeLeftMs / 1000)}
                   </span>
                 </div>
               </div>
 
-              <span className="text-[10px] bg-emerald-50 text-emerald-800 py-1 px-3 rounded-full font-bold">
-                🔒 Antifraude por Geolocalização e Chave Ativa
-              </span>
+              <div className="w-full text-[10px] flex items-center justify-center gap-1.5 leading-tight text-slate-500 font-semibold bg-[#fcfdfd] border border-slate-150 p-2.5 rounded-xl">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                <span>Alunos devem apontar a câmera do Passo 2 para este código!</span>
+              </div>
             </div>
 
           </div>
 
-          {/* RIGHT SIDE: LIVE SHEET */}
-          <div className="col-span-1 lg:col-span-3">
-
-            {/* SPREADSHEET CARD */}
-            <div className="flex flex-col bg-white rounded-3xl border border-slate-200/80 shadow-md p-6 h-full min-h-[500px]">
+          {/* MAIN PROJECTION CENTER: SLIDES & LIVE SHEET LIST */}
+          <div className="col-span-1 lg:col-span-3 space-y-6">
             
-            {/* Grid Title bar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-slate-100 pb-5 mb-5">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md">
-                  <TableProperties className="w-4.5 h-4.5" />
+            {/* CURRENT PROJECTION SLIDE SCREEN */}
+            <div className="bg-[#0b132b] rounded-3xl p-5 border border-slate-800 shadow-xl relative overflow-hidden flex flex-col space-y-4">
+              
+              {/* SLIDE COVER FRAME */}
+              <div className="relative rounded-2xl overflow-hidden aspect-[16/9] bg-slate-900 border border-slate-800 flex items-center justify-center group shadow-inner">
+                {slides[activeSlideIndex] ? (
+                  <>
+                    <img 
+                      src={slides[activeSlideIndex].imageUrl} 
+                      alt="Projeção" 
+                      className="absolute inset-0 w-full h-full object-cover opacity-65 select-none"
+                    />
+                    
+                    {/* Shadow overlay */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
+
+                    {/* Left & Right toggle controls */}
+                    <div className="absolute inset-0 flex items-center justify-between px-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => changeActiveSlide(Math.max(0, activeSlideIndex - 1))}
+                        disabled={activeSlideIndex === 0}
+                        className="w-10 h-10 rounded-full bg-slate-900/85 hover:bg-slate-900 text-white flex items-center justify-center border border-slate-700 disabled:opacity-40 transition-all cursor-pointer"
+                      >
+                        ◀
+                      </button>
+                      <button
+                        onClick={() => changeActiveSlide(Math.min(slides.length - 1, activeSlideIndex + 1))}
+                        disabled={activeSlideIndex === slides.length - 1}
+                        className="w-10 h-10 rounded-full bg-slate-900/85 hover:bg-slate-900 text-white flex items-center justify-center border border-slate-700 disabled:opacity-40 transition-all cursor-pointer"
+                      >
+                        ▶
+                      </button>
+                    </div>
+
+                    {/* Title Banner */}
+                    <div className="absolute bottom-6 left-6 right-6 text-left">
+                      <span className="text-[10px] text-indigo-400 font-extrabold uppercase tracking-widest block mb-1">
+                        Slide {activeSlideIndex + 1} de {slides.length}
+                      </span>
+                      <h2 className="text-base sm:text-lg font-black text-white leading-tight drop-shadow-md">
+                        {slides[activeSlideIndex].title}
+                      </h2>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-slate-500 text-xs">Nenhum slide disponível</div>
+                )}
+              </div>
+
+              {/* SLIDES BAR SELECTION SYSTEM */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-800">
+                {slides.map((slide, idx) => (
+                  <button
+                    key={slide.id}
+                    onClick={() => changeActiveSlide(idx)}
+                    className={`relative shrink-0 w-24 h-14 rounded-xl overflow-hidden border-2 transition-all cursor-pointer ${
+                      idx === activeSlideIndex 
+                        ? 'border-[#0066ff] scale-95 shadow-md shadow-blue-500/10' 
+                        : 'border-slate-800 opacity-60 hover:opacity-100'
+                    }`}
+                  >
+                    <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <span className="text-[10px] font-black text-white bg-slate-950/80 rounded-md px-1.5 py-0.5">#{idx + 1}</span>
+                    </div>
+                  </button>
+                ))}
+                
+                {/* Plus button to add custom slide */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const title = prompt("Digite o título do seu slide:");
+                    const url = prompt("Cole a URL de uma imagem para o slide (via Unsplash ou similar):", "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=1000&auto=format&fit=crop&q=80");
+                    if (title && url) {
+                      addSlide(title, url);
+                    }
+                  }}
+                  className="shrink-0 w-12 h-14 bg-slate-900 border-2 border-dashed border-slate-805 hover:bg-slate-850 text-indigo-400 rounded-xl flex items-center justify-center cursor-pointer transition-all hover:scale-105"
+                  title="Criar novo slide"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* SLIDE CONTROL ACTIONS */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                <div className="flex gap-1">
+                  {slides.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => deleteSlide(slides[activeSlideIndex].id)}
+                      className="text-[9px] font-bold text-red-400 hover:text-red-300 py-1 px-2.5 rounded-lg border border-red-950 bg-red-950/15 cursor-pointer max-w-[130px] flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3 text-red-450" />
+                      <span>Excluir slide atual</span>
+                    </button>
+                  )}
                 </div>
+
+                <div className="text-[9px] bg-slate-950/50 text-slate-400 px-3 py-1 rounded-lg border border-slate-805 font-mono">
+                  Sincronização: {isServerOffline ? 'NUVEM CLOUD_SYN fallback' : 'WEBSOCKET_EXPRESS_LIVE'}
+                </div>
+              </div>
+            </div>
+
+            {/* LIVE SPREADSHEET SHEET OF COMPLETED DISPOSITIVES */}
+            <div className="bg-white rounded-3xl border border-slate-200/85 p-6 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-800">Planilha de Chamada</h3>
-                  <p className="text-[11px] text-slate-500 font-medium">Relatório Automático Gerado pelo Scanner do Professor</p>
+                  <h3 className="text-sm font-black text-[#0b1c30] flex items-center gap-2">
+                    <TableProperties className="w-4.5 h-4.5 text-[#0066ff]" />
+                    Fila de Presença Integrada Live
+                  </h3>
+                  <p className="text-[10px] text-slate-500">Exibição em tempo real de quem teve o token validado</p>
+                </div>
+
+                <div className="flex items-center gap-2.5 self-end sm:self-auto w-full sm:w-auto">
+                  {/* Generate Random Dummy Student */}
+                  <button
+                    type="button"
+                    onClick={handleAddDemoStudent}
+                    className="flex-1 sm:flex-none text-[10px] bg-slate-50 hover:bg-slate-100 font-extrabold text-[#0066ff] py-1.5 px-3 rounded-lg border border-blue-100 transition-all cursor-pointer"
+                  >
+                    + Simular Entrada
+                  </button>
+                  
+                  {/* Download Spreadsheet Button */}
+                  <button
+                    type="button"
+                    onClick={handleDownloadCSV}
+                    className="flex-1 sm:flex-none text-[10px] bg-[#10b981] hover:bg-emerald-600 text-white font-extrabold py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1 hover:shadow-inner"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Baixar Planilha</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResetData}
+                    className="p-1 px-2.5 rounded-lg bg-pink-50 hover:bg-pink-100 text-pink-700 border border-pink-150 transition-colors cursor-pointer text-[10px]"
+                    title="Limpar todos os dados"
+                  >
+                    Limpar
+                  </button>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  onClick={handleAddDemoStudent}
-                  className="flex-1 sm:flex-initial py-1.5 px-3 rounded-xl bg-[#f0f6ff] text-[#0066ff] hover:bg-blue-100 text-xs font-extrabold select-none transition-all cursor-pointer flex items-center justify-center gap-1 border border-blue-150"
-                  title="Simula a entrada de alunos para simular"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  + Testar Aluno
-                </button>
-                <button
-                  onClick={handleDownloadCSV}
-                  className="flex-1 sm:flex-initial py-1.5 px-3 rounded-xl bg-[#0066ff] hover:bg-blue-700 text-white text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 shadow-sm"
-                  title="Exportar para Excel / LibreOffice"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Exportar CSV
-                </button>
-                <button
-                  onClick={handleResetData}
-                  className="p-2 rounded-xl bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors border border-slate-200 cursor-pointer"
-                  title="Limpar todos os registros e reiniciar"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* STATS TILES */}
-            <div className="grid grid-cols-3 gap-4 mb-5">
-              <div className="bg-[#f8f9ff] rounded-2xl p-3 border border-slate-100 text-center">
-                <span className="text-[9px] text-[#64748b] font-bold uppercase tracking-wider block">Estudantes</span>
-                <span className="text-xl font-black text-[#0b1c30]">{students.length}</span>
-              </div>
-              <div className="bg-[#ecfdf5] rounded-2xl p-3 border border-[#d1fae5] text-center">
-                <span className="text-[9px] text-[#047857] font-bold uppercase tracking-wider block">Presenças</span>
-                <span className="text-xl font-black text-[#10b981]">{attendances.length}</span>
-              </div>
-              <div className="bg-[#fffbeb] rounded-2xl p-3 border border-[#fef3c7] text-center">
-                <span className="text-[9px] text-[#b45309] font-bold uppercase tracking-wider block">Aproveit.</span>
-                <span className="text-xl font-black text-[#amber-700]">
-                  {students.length > 0 ? `${Math.round((attendances.length / students.length) * 100)}%` : '0%'}
-                </span>
-              </div>
-            </div>
-
-            {/* ACTUAL SPREADSHEET */}
-            <div className="flex-1 overflow-auto max-h-[380px] border border-slate-100 rounded-2xl">
-              {attendances.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-400 space-y-2">
-                  <div className="w-12 h-12 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center mb-1">
-                    <Users className="w-6 h-6 text-slate-300" />
+              {/* SHEETS CONTAINER GRID */}
+              <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-inner max-h-[380px] overflow-y-auto">
+                {attendances.length === 0 ? (
+                  <div className="p-12 text-center flex flex-col items-center justify-center bg-slate-50/50">
+                    <div className="w-12 h-12 rounded-full border-2 border-dashed border-indigo-200 text-indigo-400 flex items-center justify-center mb-3 animate-spin">
+                      ⏳
+                    </div>
+                    <span className="text-xs font-black text-[#0b1c30]">Aguardando participações escanearem</span>
+                    <p className="text-[10px] text-slate-400 max-w-[280px] leading-relaxed mt-1">
+                      Peça para os alunos apontarem para o <strong className="text-blue-500">QR Code 2</strong> rotativo acima após inserirem o nome completo!
+                    </p>
                   </div>
-                  <h4 className="text-xs font-black text-slate-700">Histórico de Presenças Vazio</h4>
-                  <p className="text-[10px] text-slate-500 max-w-sm">
-                    Escaneie o QR Code na tela com o celular para assinar a chamada! Você também pode clicar no botão azul <strong>"+ Testar Aluno"</strong> acima para povoar a lista instantaneamente.
-                  </p>
-                </div>
-              ) : (
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-[#f8fafc] sticky top-0 border-b border-slate-100 font-bold text-slate-600">
-                    <tr>
-                      <th className="p-3 pl-4 text-[10px] uppercase">#</th>
-                      <th className="p-3 text-[10px] uppercase">Nome do Aluno</th>
-                      <th className="p-3 text-[10px] uppercase">Curso</th>
-                      <th className="p-3 text-[10px] uppercase">Semestre</th>
-                      <th className="p-3 text-[10px] uppercase">Horário</th>
-                      <th className="p-3 pr-4 text-center text-[10px] uppercase">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                    {attendances.map((item, index) => {
-                      const number = attendances.length - index;
-                      const time = new Date(item.scannedAt).toLocaleTimeString('pt-BR');
-                      
-                      return (
-                        <tr key={item.id} className="hover:bg-slate-50/50 transition-colors animate-fade-in">
-                          <td className="p-3 pl-4 text-slate-400 font-mono text-[10px]">{number}</td>
-                          <td className="p-3 font-bold text-slate-900">{item.studentName}</td>
-                          <td className="p-3 text-slate-500">{item.course}</td>
-                          <td className="p-3">
-                            <span className="px-2 py-0.5 bg-slate-100 rounded-md text-[10px]">{item.semester}</span>
-                          </td>
-                          <td className="p-3 text-slate-400 font-mono text-[10px]">{time}</td>
-                          <td className="p-3 pr-4 text-center">
-                            <span className="inline-flex items-center gap-1 py-0.5 px-2 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-bold border border-emerald-150">
-                              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-                              Presente
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
+                ) : (
+                  <table className="w-full text-left border-collapse bg-[#fcfdfd]">
+                    <thead>
+                      <tr className="bg-[#f0f6ff]/75 border-b border-indigo-150 text-[10px] font-black text-slate-650 tracking-wider uppercase">
+                        <th className="py-2.5 px-4">#</th>
+                        <th className="py-2.5 px-4">Estudante</th>
+                        <th className="py-2.5 px-4">Informações de Curso</th>
+                        <th className="py-2.5 px-4 text-center">Horário</th>
+                        <th className="py-2.5 px-4 text-center">Validação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {attendances.map((item, index) => {
+                        const hour = new Date(item.scannedAt).toLocaleTimeString('pt-BR');
+                        return (
+                          <tr key={item.id} className="hover:bg-[#f6faff]/70 transition-colors text-xs font-medium">
+                            <td className="py-2 px-4 font-mono text-slate-400 select-none">
+                              {attendances.length - index}
+                            </td>
+                            <td className="py-2 px-4">
+                              <span className="font-extrabold text-[#0b1c30]">{item.studentName}</span>
+                            </td>
+                            <td className="py-2 px-4 leading-tight">
+                              <p className="text-[11px] font-bold text-slate-600 truncate max-w-[200px]">{item.course}</p>
+                              <span className="text-[9px] text-slate-400 block">{item.semester}</span>
+                            </td>
+                            <td className="py-2 px-4 text-center font-mono opacity-85 text-[10px]">
+                              {hour}
+                            </td>
+                            <td className="py-2 px-4 text-center">
+                              <span className="inline-flex items-center gap-1 bg-[#10b981]/10 text-[#059669] text-[9px] font-black py-0.5 px-2 rounded-full border border-emerald-200 uppercase tracking-wide">
+                                <CheckCircle className="w-2.5 h-2.5" />
+                                {item.tokenUsed}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* SHEET BOTTOM METADATA BAR */}
+              <div className="flex items-center justify-between text-[9px] text-slate-400 font-bold bg-[#fcfdfd] border border-slate-150 p-2.5 rounded-xl">
+                <span>Registrados Totais: {students.length} dispositivo(s)</span>
+                <span>Inscritos Confirmados: {attendances.length} aprovado(s)</span>
+              </div>
             </div>
 
-            <div className="pt-4 border-t border-slate-100 text-[10px] text-slate-500 flex items-center justify-between">
-              <span>* Os dados sincronizados em tempo real via Express Server em memória.</span>
-              <span className="font-extrabold text-[#0066ff]">OnClass Test Presentation Screen</span>
-            </div>
-
-          </div> {/* Closes Spreadsheet card */}
-        </div>   {/* Closes col-span-3 wrapper */}
+          </div>
 
         </main>
       )}
 
-      {/* RENDER CASE B: PARTICIPANT / STUDENT VIEW (MOBILE) */}
+      {/* RENDER CASE B: STUDENT (PHONE) PORTAL */}
       {role === 'student' && (
-        <main className="flex-1 max-w-lg mx-auto w-full p-4 flex flex-col justify-center">
+        <main className="flex-grow max-w-md mx-auto w-full p-4 flex flex-col justify-center">
           
-          {/* STEP 1: FORM TO ACCREDIT USER */}
+          {/* STATE B1: UNREGISTERED STUDENT (MUST SIGN UP FIRST) */}
           {!currentStudent ? (
-            <div className="bg-white rounded-3xl border border-slate-200/80 shadow-lg p-6 space-y-6">
-              <div className="text-center space-y-1">
-                <div className="w-12 h-12 bg-blue-50 text-[#0066ff] rounded-2.5xl flex items-center justify-center mx-auto mb-2">
-                  <Smartphone className="w-6 h-6" />
+            <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xl p-6 space-y-6">
+              
+              <div className="text-center space-y-2">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-[#0066ff] flex items-center justify-center mx-auto shadow-inner">
+                  <BookOpen className="w-6 h-6" />
                 </div>
-                <h3 className="text-base font-black text-[#0b1c30]">Ficha do Participante</h3>
-                <p className="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto">
-                  Preencha seus dados para simular a sua presença agora mesmo na tela do professor de nossa apresentação!
+                <h3 className="text-lg font-black text-[#0b1c30]">Participante OnClass</h3>
+                <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                  Crie uma credencial provisória no seu dispositivo móvel para registrar sua presença pelo celular.
                 </p>
               </div>
 
               <form onSubmit={handleEnrollStudent} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Seu Nome Completo</label>
+                <div>
+                  <label className="text-[10px] text-slate-700 font-black uppercase tracking-wider block mb-1">Seu Nome Completo</label>
                   <input
                     type="text"
                     required
-                    placeholder="Ex: Amanda Bezerra"
+                    placeholder="Ex: Ana Maria Couto"
                     value={studentName}
                     onChange={(e) => setStudentName(e.target.value)}
-                    className="w-full text-xs font-medium bg-slate-50/75 border border-slate-200 rounded-xl px-3.5 py-3.5 outline-none focus:bg-white focus:border-[#0066ff] focus:ring-1 focus:ring-[#0066ff] transition-all"
+                    className="w-full bg-[#f8f9ff] border border-slate-200 rounded-xl px-4 py-3 text-xs outline-none focus:bg-white focus:border-[#0066ff] focus:ring-1 focus:ring-[#0066ff] font-semibold text-slate-700"
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Curso de Graduação</label>
+                <div>
+                  <label className="text-[10px] text-slate-700 font-black uppercase tracking-wider block mb-1">Seu Curso</label>
                   <input
                     type="text"
                     required
-                    placeholder="Ex: Administração de Empresas, Computação..."
+                    placeholder="Ex: Engenharia de Software"
                     value={studentCourse}
                     onChange={(e) => setStudentCourse(e.target.value)}
-                    className="w-full text-xs font-medium bg-slate-50/75 border border-slate-200 rounded-xl px-3.5 py-3.5 outline-none focus:bg-white focus:border-[#0066ff] focus:ring-1 focus:ring-[#0066ff] transition-all"
+                    className="w-full bg-[#f8f9ff] border border-slate-200 rounded-xl px-4 py-3 text-xs outline-none focus:bg-white focus:border-[#0066ff] focus:ring-1 focus:ring-[#0066ff] font-semibold text-slate-700"
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Semestre Atual</label>
+                <div>
+                  <label className="text-[10px] text-slate-700 font-black uppercase tracking-wider block mb-1">Seu Período de Semestre</label>
                   <select
                     value={studentSemester}
                     onChange={(e) => setStudentSemester(e.target.value)}
-                    className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none cursor-pointer focus:bg-white focus:border-[#0066ff]"
+                    className="w-full bg-[#f8f9ff] border border-slate-200 rounded-xl px-3 py-3 text-xs outline-none focus:bg-white focus:border-[#0066ff] focus:ring-1 focus:ring-[#0066ff] font-semibold text-slate-500"
                   >
-                    <option value="1º Semestre">1º Semestre</option>
+                    <option value="1º Semestre">1º Semestre / Introdução</option>
                     <option value="2º Semestre">2º Semestre</option>
-                    <option value="3º Semestre">3º Semestre</option>
+                    <option value="3º Semestre">3º Semestre / Intermediário</option>
                     <option value="4º Semestre">4º Semestre</option>
-                    <option value="5º Semestre">5º Semestre</option>
+                    <option value="5º Semestre">5º Semestre / Tecnologia</option>
                     <option value="6º Semestre">6º Semestre</option>
-                    <option value="7º Semestre">7º Semestre</option>
-                    <option value="8º Semestre">8º Semestre</option>
-                    <option value="9º Semestre">9º Semestre</option>
-                    <option value="10º Semestre">10º Semestre</option>
+                    <option value="7º Semestre">7º Semestre / TCC I</option>
+                    <option value="8º Semestre">8º Semestre / Conclusão</option>
                   </select>
                 </div>
 
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-4 px-4 bg-[#0066ff] hover:bg-blue-700 text-white rounded-xl text-xs font-bold leading-none cursor-pointer shadow-md shadow-blue-200/50 flex items-center justify-center gap-1.5 transition-colors pt-4 pb-4"
+                  className="w-full bg-[#0066ff] hover:bg-blue-700 text-white font-black text-xs py-3 rounded-xl shadow-md shadow-indigo-100 transition-colors cursor-pointer"
                 >
-                  {isLoading ? 'Registrando...' : 'Entrar na Chamada Ao Vivo'}
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  {isLoading ? 'Registrando...' : 'Criar Perfil de Aluno'}
                 </button>
               </form>
+
+              <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100/50 text-[10px] text-blue-700 leading-tight">
+                💡 <strong>Por que fazer isso?</strong> Após preencher isso uma vez, seu aparelho é vinculado ao painel. Próximos slides se atualizam sincronizados!
+              </div>
+
             </div>
-          ) : (scanStatus.type === 'success' || hasAlreadyCheckedIn) ? (
-            /* PRESENÇA CONFIRMADA CARD SUCCESS STATE */
-            <div className="bg-white rounded-3xl border border-emerald-100 shadow-xl p-8 space-y-6 text-center animate-fade-in my-auto max-w-sm w-full mx-auto select-none">
+          ) : hasAlreadyCheckedIn || scanStatus.type === 'success' ? (
+            
+            /* STATE B2: SUCCESSFULLY CHECKED IN PORTAL */
+            <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xl p-6 text-center space-y-6">
               
-              {/* Custom Dancing Bear & Confetti Keyframes Styles scoped here */}
-              <style>{`
-                @keyframes bear-dance {
-                  0%, 100% { transform: translateY(0) rotate(-6deg) scale(1); }
-                  50% { transform: translateY(-10px) rotate(6deg) scale(1.05); }
-                }
-                @keyframes left-arm-dance {
-                  0%, 100% { transform: rotate(-30deg); }
-                  50% { transform: rotate(45deg); }
-                }
-                @keyframes right-arm-dance {
-                  0%, 100% { transform: rotate(30deg); }
-                  50% { transform: rotate(-45deg); }
-                }
-                @keyframes left-foot-dance {
-                  0%, 100% { transform: translate(0, 0) rotate(0deg); }
-                  50% { transform: translate(-4px, -3px) rotate(-15deg); }
-                }
-                @keyframes right-foot-dance {
-                  0%, 100% { transform: translate(0, 0) rotate(0deg); }
-                  50% { transform: translate(4px, -3px) rotate(15deg); }
-                }
-                @keyframes musical-note-1 {
-                  0% { transform: translate(0, 20px) scale(0) rotate(0deg); opacity: 0; }
-                  50% { opacity: 0.8; }
-                  100% { transform: translate(-30px, -80px) scale(1) rotate(-35deg); opacity: 0; }
-                }
-                @keyframes musical-note-2 {
-                  0% { transform: translate(0, 20px) scale(0) rotate(0deg); opacity: 0; }
-                  50% { opacity: 0.8; }
-                  100% { transform: translate(30px, -70px) scale(1.1) rotate(35deg); opacity: 0; }
-                }
-                @keyframes badge-pop {
-                  0% { transform: scale(0.9); }
-                  50% { transform: scale(1.08); }
-                  100% { transform: scale(1); }
-                }
-
-                .bear-container {
-                  animation: bear-dance 1.4s ease-in-out infinite;
-                  transform-origin: bottom center;
-                }
-                .left-arm {
-                  animation: left-arm-dance 0.7s ease-in-out infinite alternate;
-                  transform-origin: 38px 105px;
-                }
-                .right-arm {
-                  animation: right-arm-dance 0.7s ease-in-out infinite alternate;
-                  transform-origin: 102px 105px;
-                }
-                .left-foot {
-                  animation: left-foot-dance 0.7s ease-in-out infinite alternate;
-                  transform-origin: 50px 145px;
-                }
-                .right-foot {
-                  animation: right-foot-dance 0.7s ease-in-out infinite alternate;
-                  transform-origin: 90px 145px;
-                }
-                .sparkle-note-1 {
-                  animation: musical-note-1 2.2s ease-out infinite;
-                }
-                .sparkle-note-2 {
-                  animation: musical-note-2 2.6s ease-out infinite 0.7s;
-                }
-                .badge-pulse {
-                  animation: badge-pop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-                }
-              `}</style>
-
-              {/* Celebrating Bear Mascot SVG Wrapper */}
-              <div className="relative w-full flex flex-col items-center justify-center py-2 select-none">
-                {/* Floating Confetti / Sparkles */}
-                <span className="absolute text-xl sparkle-note-1 left-[25%] top-[5%] select-none pointer-events-none">✨</span>
-                <span className="absolute text-2xl sparkle-note-2 right-[25%] top-[10%] select-none pointer-events-none">🎵</span>
-                <span className="absolute text-lg sparkle-note-1 right-[20%] top-[45%] select-none pointer-events-none">🎶</span>
-                <span className="absolute text-xl sparkle-note-2 left-[18%] top-[50%] select-none pointer-events-none">🎉</span>
-                <span className="absolute text-lg sparkle-note-1 left-[32%] top-[70%] select-none pointer-events-none">🐻</span>
-                <span className="absolute text-lg sparkle-note-2 right-[30%] top-[75%] select-none pointer-events-none">✨</span>
-
-                <div className="w-40 h-40 flex items-center justify-center transition-all bg-sky-50/50 rounded-full border border-sky-100 shadow-inner p-2 relative">
-                  <svg 
-                    viewBox="0 0 140 160" 
-                    className="w-36 h-36 drop-shadow-[0_10px_15px_rgba(115,64,4,0.18)]"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <g className="bear-container">
-                      <ellipse cx="70" cy="148" rx="35" ry="6" fill="#000000" fillOpacity="0.08" />
-
-                      {/* Left Foot */}
-                      <g className="left-foot">
-                        <ellipse cx="50" cy="143" rx="14" ry="10" fill="#92400e" />
-                        <ellipse cx="50" cy="141" rx="8" ry="6" fill="#fcd34d" />
-                        <circle cx="43" cy="135" r="2.5" fill="#fcd34d" />
-                        <circle cx="50" cy="133" r="2.5" fill="#fcd34d" />
-                        <circle cx="57" cy="135" r="2.5" fill="#fcd34d" />
-                      </g>
-
-                      {/* Right Foot */}
-                      <g className="right-foot">
-                        <ellipse cx="90" cy="143" rx="14" ry="10" fill="#92400e" />
-                        <ellipse cx="90" cy="141" rx="8" ry="6" fill="#fcd34d" />
-                        <circle cx="83" cy="135" r="2.5" fill="#fcd34d" />
-                        <circle cx="90" cy="133" r="2.5" fill="#fcd34d" />
-                        <circle cx="97" cy="135" r="2.5" fill="#fcd34d" />
-                      </g>
-
-                      {/* Left Hand / Arm */}
-                      <g className="left-arm">
-                        <ellipse cx="28" cy="108" rx="12" ry="8" fill="#d97706" transform="rotate(-30 28 108)" />
-                        <circle cx="20" cy="108" r="5" fill="#feb019" />
-                      </g>
-
-                      {/* Right Hand / Arm */}
-                      <g className="right-arm">
-                        <ellipse cx="112" cy="108" rx="12" ry="8" fill="#d97706" transform="rotate(30 112 108)" />
-                        <circle cx="120" cy="108" r="5" fill="#feb019" />
-                      </g>
-
-                      <rect x="36" y="88" width="68" height="52" rx="28" fill="#92400e" />
-                      <ellipse cx="70" cy="116" rx="22" ry="18" fill="#fef3c7" />
-                      <circle cx="70" cy="124" r="2.5" fill="#b45309" />
-
+              <div className="relative flex justify-center py-4">
+                {/* Bear congratulating */}
+                <div className="w-36 h-36 border border-slate-200 p-1 bg-gradient-to-tr from-rose-100 to-amber-100 rounded-full flex items-center justify-center animate-bounce">
+                  <svg viewBox="0 0 140 140" className="w-28 h-28">
+                    <g className="translate-y-4">
+                      {/* Ears */}
                       <circle cx="34" cy="42" r="15" fill="#92400e" />
                       <circle cx="34" cy="42" r="8" fill="#fecdd3" />
 
@@ -1560,7 +1549,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
 
               <div className="text-[9px] text-slate-400 flex items-center justify-center gap-1.5 font-medium">
                 <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-                <span>Conexão active e sincronizada em tempo real</span>
+                <span>Conexão ativa e sincronizada em tempo real</span>
               </div>
             </div>
           ) : (
@@ -1681,7 +1670,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
             {/* Close button */}
             <button
               onClick={() => setExpandedQr(null)}
-              className="absolute top-5 right-5 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors border border-white/10 cursor-pointer shadow-md"
+              className="absolute top-5 right-5 w-10 h-10 rounded-full bg-white/15 hover:bg-white/20 text-white flex items-center justify-center transition-colors border border-white/10 cursor-pointer shadow-md"
               title="Fechar"
             >
               <X className="w-5 h-5" />

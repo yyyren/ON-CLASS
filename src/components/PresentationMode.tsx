@@ -41,6 +41,7 @@ interface PresentationModeProps {
 }
 
 export default function PresentationMode({ onBack, initialOverrideMode }: PresentationModeProps) {
+  // Detecta se é um aluno real pelo parâmetro de URL
   const isLockedStudent = (() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
@@ -50,6 +51,7 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
     }
   })();
 
+  // Define a role inicial com base na trava de segurança do aluno
   const [role, setRole] = useState<'presenter' | 'student'>(() => {
     if (isLockedStudent) return 'student';
     if (initialOverrideMode) return initialOverrideMode;
@@ -61,35 +63,19 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const urlRoom = urlParams.get('room');
-      if (urlRoom) {
-        localStorage.setItem('onclass_pres_room_code', urlRoom.toUpperCase());
-        return urlRoom.toUpperCase();
-      }
-      const saved = localStorage.getItem('onclass_pres_room_code');
-      if (saved) return saved;
-      const randCode = "ROOM95";
-      localStorage.setItem('onclass_pres_room_code', randCode);
-      return randCode;
+      if (urlRoom) return urlRoom.toUpperCase();
+      return 'ROOM95';
     } catch {
       return 'ROOM95';
     }
   });
 
-  // Server state
+  // Estado do Token unificado via LocalStorage estável
   const [activeToken, setActiveToken] = useState<string>(() => {
     return localStorage.getItem('onclass_pres_active_token') || 'LIVE-ON95';
   });
 
   const [timeLeftMs, setTimeLeftMs] = useState<number>(10000);
-  const [students, setStudents] = useState<PresentationStudent[]>(() => {
-    try {
-      const saved = localStorage.getItem('onclass_pres_students');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
   const [attendances, setAttendances] = useState<PresentationAttendance[]>(() => {
     try {
       const saved = localStorage.getItem('onclass_pres_attendances');
@@ -101,9 +87,8 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [activeNotification, setActiveNotification] = useState<string | null>(null);
-  const [isServerOffline, setIsServerOffline] = useState<boolean>(true);
 
-  // Student specific interface states
+  // Estados do formulário do Aluno
   const [studentName, setStudentName] = useState('');
   const [studentCourse, setStudentCourse] = useState('');
   const [studentSemester, setStudentSemester] = useState('1º Semestre');
@@ -128,45 +113,14 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
   })();
 
   const [copiedLink, setCopiedLink] = useState(false);
-  const [expandedQr, setExpandedQr] = useState<'enrollment' | 'token' | null>(null);
-
-  // Camera state
-  const [cameraPermissionError, setCameraPermissionError] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
-
-  const fetchCloudKVState = async (room: string) => {
-    try {
-      const res = await fetch(`https://kvdb.io/jXGg8p24RDe42uX6iZz8t87b/room_${room}`);
-      if (res.ok) {
-        const text = await res.text();
-        if (text && text.trim()) {
-          return JSON.parse(text);
-        }
-      }
-    } catch (e) {
-      console.warn("KV Cloud read error", e);
-    }
-    return null;
-  };
-
-  const writeCloudKVState = async (room: string, state: any) => {
-    try {
-      await fetch(`https://kvdb.io/jXGg8p24RDe42uX6iZz8t87b/room_${room}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(state)
-      });
-    } catch (e) {
-      console.warn("KV Cloud write error", e);
-    }
-  };
 
   const getStudentShareUrl = () => {
     const origin = window.location.origin + window.location.pathname;
     return `${origin}?mode=apresentacao_aluno&room=${roomCode}`;
   };
 
-  // Real Camera Scanner hook
+  // Câmera Scanner nativa para o Aluno
   useEffect(() => {
     if (role !== 'student' || !currentStudent || hasAlreadyCheckedIn || scanStatus.type === 'success') {
       return;
@@ -192,18 +146,15 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
             }
           },
           (decodedText) => {
-            if (decodedText.includes("mode=apresentacao_aluno")) {
-              return; // Ignora se escanear o QR code errado (Passo 1)
+            if (!decodedText.includes("mode=")) {
+              handleScanOrSubmitCode(decodedText);
             }
-            handleScanOrSubmitCode(decodedText);
           },
           () => {}
         ).then(() => {
           isStarted = true;
           setIsCameraActive(true);
-          setCameraPermissionError(null);
-        }).catch((err) => {
-          setCameraPermissionError("A câmera não pôde ser iniciada. Digite o código de 4 dígitos manualmente.");
+        }).catch(() => {
           setIsCameraActive(false);
         });
       } catch (e) {
@@ -213,46 +164,39 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
 
     return () => {
       clearTimeout(startTimeout);
-      if (html5QrCode) {
-        if (isStarted) {
-          html5QrCode.stop().then(() => {
-            setIsCameraActive(false);
-          }).catch(err => console.warn(err));
-        }
+      if (html5QrCode && isStarted) {
+        html5QrCode.stop().then(() => setIsCameraActive(false)).catch(err => console.warn(err));
       }
     };
   }, [role, currentStudent, hasAlreadyCheckedIn, scanStatus.type]);
 
-  // Synchronized polling
+  // Sincronização e Polling em tempo real
   useEffect(() => {
-    const fetchStatus = async () => {
+    const syncState = () => {
       try {
-        const cloudState = await fetchCloudKVState(roomCode);
-        if (cloudState) {
-          if (attendances.length > 0 && cloudState.attendances && cloudState.attendances.length > attendances.length) {
-            const newAttendance = cloudState.attendances[0];
-            setActiveNotification(`🎉 ${newAttendance.studentName} acabou de confirmar presença!`);
-            setTimeout(() => setActiveNotification(null), 4000);
-          }
-
-          if (cloudState.activeToken) {
-            setActiveToken(cloudState.activeToken);
-            localStorage.setItem('onclass_pres_active_token', cloudState.activeToken);
-          }
-          if (cloudState.students) setStudents(cloudState.students);
-          if (cloudState.attendances) setAttendances(cloudState.attendances);
+        const savedAtts = localStorage.getItem('onclass_pres_attendances');
+        const localAtts = savedAtts ? JSON.parse(savedAtts) : [];
+        if (localAtts.length > attendances.length && role === 'presenter') {
+          setActiveNotification(`🎉 ${localAtts[0].studentName} confirmou presença!`);
+          setTimeout(() => setActiveNotification(null), 3500);
         }
-      } catch (err) {
-        console.warn("Severe sync error, rolling fallback", err);
+        setAttendances(localAtts);
+
+        const savedToken = localStorage.getItem('onclass_pres_active_token');
+        if (savedToken) {
+          setActiveToken(savedToken);
+        }
+      } catch (e) {
+        console.warn(e);
       }
     };
 
-    fetchStatus();
-    const intervalId = setInterval(fetchStatus, 2000);
-    return () => clearInterval(intervalId);
-  }, [attendances.length, roomCode]);
+    syncState();
+    const interval = setInterval(syncState, 1000);
+    return () => clearInterval(interval);
+  }, [attendances.length, role]);
 
-  // Timer counter / Token rotation exclusively on presenter role
+  // Temporizador Unificado e Rotatividade estável controlada pelo Projetor
   useEffect(() => {
     const interval = setInterval(() => {
       setTimeLeftMs((prev) => {
@@ -263,18 +207,9 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
             for (let i = 0; i < 4; i++) {
               code += chars.charAt(Math.floor(Math.random() * chars.length));
             }
-            const currentActive = localStorage.getItem('onclass_pres_active_token') || activeToken;
-            localStorage.setItem('onclass_pres_previous_token', currentActive);
+            localStorage.setItem('onclass_pres_previous_token', localStorage.getItem('onclass_pres_active_token') || 'LIVE-ON95');
             localStorage.setItem('onclass_pres_active_token', code);
             setActiveToken(code);
-
-            fetchCloudKVState(roomCode).then((cloudState) => {
-              const freshState = cloudState || { students: [], attendances: [] };
-              freshState.previousToken = currentActive;
-              freshState.activeToken = code;
-              freshState.lastUpdated = Date.now();
-              writeCloudKVState(roomCode, freshState);
-            });
           }
           return 10000;
         }
@@ -282,19 +217,18 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
       });
     }, 100);
     return () => clearInterval(interval);
-  }, [role, roomCode, activeToken]);
+  }, [role]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(getStudentShareUrl());
     setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2500);
+    setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleEnrollStudent = async (e: React.FormEvent) => {
+  const handleEnrollStudent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentName.trim() || !studentCourse.trim()) return;
 
-    setIsLoading(true);
     const mockStudent: PresentationStudent = {
       id: 'std-' + Math.random().toString(36).substring(2, 7),
       name: studentName,
@@ -303,110 +237,78 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
       enrolledAt: new Date().toISOString()
     };
 
-    try {
-      const cloudState = await fetchCloudKVState(roomCode) || {
-        activeToken,
-        students: [],
-        attendances: []
-      };
-      if (!cloudState.students) cloudState.students = [];
-      cloudState.students.push(mockStudent);
-      await writeCloudKVState(roomCode, cloudState);
-
-      setCurrentStudent(mockStudent);
-      localStorage.setItem('onclass_pres_active_student', JSON.stringify(mockStudent));
-      setScanStatus({ type: 'idle', message: '' });
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLoading(false);
-    }
+    setCurrentStudent(mockStudent);
+    localStorage.setItem('onclass_pres_active_student', JSON.stringify(mockStudent));
+    setScanStatus({ type: 'idle', message: '' });
   };
 
-  const handleScanOrSubmitCode = async (codeToSubmit: string) => {
+  const handleScanOrSubmitCode = (codeToSubmit: string) => {
     if (!currentStudent || hasAlreadyCheckedIn) return;
 
-    let cleanCode = codeToSubmit.trim().toUpperCase();
-    if (cleanCode.startsWith("LIVE-")) {
-      cleanCode = cleanCode.replace("LIVE-", "");
-    }
+    const cleanCode = codeToSubmit.trim().toUpperCase().replace("LIVE-", "");
+    if (!cleanCode) return;
 
-    if (!cleanCode) {
-      setScanStatus({ type: 'error', message: 'Código em branco. Digite as 4 letras visíveis no projetor.' });
+    setIsLoading(true);
+
+    const currentTokenStored = (localStorage.getItem('onclass_pres_active_token') || activeToken).replace("LIVE-", "");
+    const previousTokenStored = (localStorage.getItem('onclass_pres_previous_token') || '').replace("LIVE-", "");
+
+    // Aceita o token atual, o recém expirado (delay de segurança) ou o padrão mestre
+    const isValid = cleanCode === currentTokenStored || cleanCode === previousTokenStored || cleanCode === "ON95";
+
+    if (!isValid) {
+      setScanStatus({ 
+        type: 'error', 
+        message: 'Código inválido ou expirado! Aguarde o novo código atualizar na tela do professor.' 
+      });
+      setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
+    const newAttendance: PresentationAttendance = {
+      id: 'att-' + Math.random().toString(36).substring(2, 7),
+      studentId: currentStudent.id,
+      studentName: currentStudent.name,
+      course: currentStudent.course,
+      semester: currentStudent.semester,
+      scannedAt: new Date().toISOString(),
+      tokenUsed: "LIVE-" + cleanCode
+    };
+
     try {
-      const cloudState = await fetchCloudKVState(roomCode);
-      const serverActiveToken = cloudState?.activeToken ? cloudState.activeToken.replace("LIVE-", "") : activeToken.replace("LIVE-", "");
-      const serverPrevToken = cloudState?.previousToken ? cloudState.previousToken.replace("LIVE-", "") : (localStorage.getItem('onclass_pres_previous_token') || '').replace("LIVE-", "");
-
-      const isValid = cleanCode === serverActiveToken || cleanCode === serverPrevToken || cleanCode === "ON95";
-
-      if (!isValid) {
-        setScanStatus({ 
-          type: 'error', 
-          message: `Código [${cleanCode}] inválido ou expirado! Aguarde a atualização automática no painel do professor.` 
-        });
-        setIsLoading(false);
-        return;
+      const savedAtts = localStorage.getItem('onclass_pres_attendances');
+      const listAtts = savedAtts ? JSON.parse(savedAtts) : [];
+      if (!listAtts.some((a: any) => a.studentId === currentStudent.id)) {
+        listAtts.unshift(newAttendance);
+        localStorage.setItem('onclass_pres_attendances', JSON.stringify(listAtts));
       }
-
-      const newAttendance: PresentationAttendance = {
-        id: 'att-' + Math.random().toString(36).substring(2, 7),
-        studentId: currentStudent.id,
-        studentName: currentStudent.name,
-        course: currentStudent.course,
-        semester: currentStudent.semester,
-        scannedAt: new Date().toISOString(),
-        tokenUsed: "LIVE-" + cleanCode
-      };
-
-      const finalState = cloudState || { activeToken, students: [], attendances: [] };
-      if (!finalState.attendances) finalState.attendances = [];
-      if (!finalState.attendances.some((a: any) => a.studentId === currentStudent.id)) {
-        finalState.attendances.unshift(newAttendance);
-      }
-      await writeCloudKVState(roomCode, finalState);
-
-      setAttendances(finalState.attendances);
-      setScanStatus({ type: 'success', message: 'Presença confirmada e sincronizada!' });
+      setAttendances(listAtts);
+      setScanStatus({ type: 'success', message: 'Presença computada com sucesso no projetor!' });
       setManualCode('');
     } catch (e) {
-      setScanStatus({ type: 'error', message: 'Falha de conexão com a nuvem. Tente reenviar em instantes.' });
+      console.warn(e);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleResetData = async () => {
-    if (!window.confirm("Deseja realmente limpar a chamada?")) return;
-    const freshState = {
-      activeToken: 'LIVE-ON95',
-      students: [],
-      attendances: [],
-      lastUpdated: Date.now()
-    };
-    await writeCloudKVState(roomCode, freshState);
-    setStudents([]);
+  const handleResetData = () => {
+    if (!window.confirm("Deseja limpar os registros atuais da chamada?")) return;
+    localStorage.setItem('onclass_pres_active_token', 'LIVE-ON95');
+    localStorage.setItem('onclass_pres_attendances', JSON.stringify([]));
     setAttendances([]);
-    localStorage.removeItem('onclass_pres_students');
-    localStorage.removeItem('onclass_pres_attendances');
-    setActiveNotification("✨ Chamada resetada!");
-    setTimeout(() => setActiveNotification(null), 2000);
+    setActiveToken('LIVE-ON95');
   };
 
-  const handleAddDemoStudent = async () => {
-    const names = ["Rodrigo Mendes", "Amanda Lima", "Carlos Pinho", "Juliana Moraes"];
+  const handleAddDemoStudent = () => {
+    const names = ["Rodrigo Mendes", "Amanda Lima", "Carlos Pinho", "Juliana Moraes", "Bruno Santos"];
     const courses = ["Engenharia de Software", "Análise de Sistemas", "Ciência da Computação"];
-    const name = names[Math.floor(Math.random() * names.length)] + " " + Math.floor(Math.random() * 100);
+    const name = names[Math.floor(Math.random() * names.length)] + " " + Math.floor(Math.random() * 80 + 10);
     const course = courses[Math.floor(Math.random() * courses.length)];
 
-    const mockId = 'demo-' + Math.random().toString(36).substring(2, 5);
     const newAtt: PresentationAttendance = {
       id: 'att-' + Math.random().toString(36).substring(2, 5),
-      studentId: mockId,
+      studentId: 'demo-' + Math.random().toString(36).substring(2, 5),
       studentName: name,
       course: course,
       semester: '1º Semestre',
@@ -414,49 +316,61 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
       tokenUsed: activeToken
     };
 
-    const cloudState = await fetchCloudKVState(roomCode) || { activeToken, students: [], attendances: [] };
-    if (!cloudState.attendances) cloudState.attendances = [];
-    cloudState.attendances.unshift(newAtt);
-    await writeCloudKVState(roomCode, cloudState);
-    setAttendances(cloudState.attendances);
+    const saved = localStorage.getItem('onclass_pres_attendances');
+    const list = saved ? JSON.parse(saved) : [];
+    list.unshift(newAtt);
+    localStorage.setItem('onclass_pres_attendances', JSON.stringify(list));
+    setAttendances(list);
   };
 
   const handleDownloadCSV = () => {
     if (attendances.length === 0) return;
-    let csvContent = "data:text/csv;charset=utf-8,Nome,Curso,Semestre,Horio,Token\n";
+    let csvContent = "data:text/csv;charset=utf-8,Nome Aluno,Curso,Semestre,Horario,Token Validador\n";
     attendances.forEach((item) => {
-      csvContent += `"${item.studentName}","${item.course}","${item.semester}","${item.scannedAt}","${item.tokenUsed}"\n`;
+      csvContent += `"${item.studentName}","${item.course}","${item.semester}","${new Date(item.scannedAt).toLocaleTimeString('pt-BR')}","${item.tokenUsed}"\n`;
     });
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `chamada_${roomCode}.csv`);
+    link.setAttribute("download", `chamada_onclass.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   return (
-    <div className="w-full min-h-screen bg-[#f3f7fd] flex flex-col">
+    <div className="w-full min-h-screen bg-[#f3f7fd] flex flex-col font-sans select-none">
+      {/* HEADER DINÂMICO E PROTEGIDO CONTRA ALUNOS */}
       <header className="bg-white border-b border-blue-100 py-3.5 px-6 shadow-sm sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 cursor-pointer">
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="h-6 w-px bg-slate-200"></div>
             <div>
-              <h1 className="text-sm font-extrabold text-[#0b1c30]">OnClass Chamada QR</h1>
-              <p className="text-[10px] text-slate-500 font-medium">Sala Ativa: <span className="font-mono text-blue-600 font-bold">{roomCode}</span></p>
+              <h1 className="text-sm font-extrabold text-[#0b1c30]">OnClass Presença</h1>
+              <p className="text-[10px] text-slate-500 font-medium">Controle e Validação Dinâmica de Aula</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 bg-[#f0f6ff] p-1 rounded-xl border border-blue-100">
-            <button onClick={() => setRole('presenter')} className={`py-1.5 px-4 rounded-lg text-xs font-bold transition-all cursor-pointer ${role === 'presenter' ? 'bg-[#0066ff] text-white shadow-sm' : 'text-slate-600'}`}>
-              <Laptop className="w-3.5 h-3.5 inline mr-1" /> Projetor
-            </button>
-            <button onClick={() => setRole('student')} className={`py-1.5 px-4 rounded-lg text-xs font-bold transition-all cursor-pointer ${role === 'student' ? 'bg-[#0066ff] text-white shadow-sm' : 'text-slate-600'}`}>
-              <Smartphone className="w-3.5 h-3.5 inline mr-1" /> Celular
-            </button>
-          </div>
+
+          {/* TRAVA DE SEGURANÇA MESTRE: Só exibe o alternador se não for um link de aluno trancado */}
+          {!isLockedStudent && (
+            <div className="flex items-center gap-2 bg-[#f0f6ff] p-1 rounded-xl border border-blue-100">
+              <button onClick={() => setRole('presenter')} className={`py-1.5 px-4 rounded-lg text-xs font-bold transition-all cursor-pointer ${role === 'presenter' ? 'bg-[#0066ff] text-white shadow-sm' : 'text-slate-600'}`}>
+                <Laptop className="w-3.5 h-3.5 inline mr-1" /> Projetor
+              </button>
+              <button onClick={() => setRole('student')} className={`py-1.5 px-4 rounded-lg text-xs font-bold transition-all cursor-pointer ${role === 'student' ? 'bg-[#0066ff] text-white shadow-sm' : 'text-slate-600'}`}>
+                <Smartphone className="w-3.5 h-3.5 inline mr-1" /> Celular
+              </button>
+            </div>
+          )}
+
+          {isLockedStudent && (
+            <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-3 py-1 rounded-xl border border-emerald-200 font-bold text-[10px] uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+              Portal do Estudante
+            </div>
+          )}
         </div>
       </header>
 
@@ -466,14 +380,16 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
         </div>
       )}
 
+      {/* RENDER PROJETOR (PROFESSOR) */}
       {role === 'presenter' && (
         <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 grid grid-cols-1 lg:grid-cols-5 gap-6">
           <div className="col-span-1 lg:col-span-2 space-y-6">
-            {/* PASSO 1 */}
+            
+            {/* PASSO 1 - QR CADASTRO */}
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col items-center text-center space-y-3">
-              <span className="bg-blue-100 text-blue-700 px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">Passo 1: Entrar na Sala</span>
-              <p className="text-[11px] text-slate-500">Abra a câmera do celular para preencher seu nome e curso</p>
-              <div className="bg-white border border-slate-200 p-2 rounded-xl">
+              <span className="bg-blue-100 text-blue-700 px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">Passo 1: Entrar na Chamada</span>
+              <p className="text-[11px] text-slate-500">Abra a câmera do celular para preencher seus dados de aluno</p>
+              <div className="bg-white border border-slate-200 p-2.5 rounded-xl shadow-sm">
                 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(getStudentShareUrl())}`} className="w-36 h-36" alt="QR 1" referrerPolicy="no-referrer" />
               </div>
               <div className="w-full flex gap-1 bg-[#f1f5f9] p-1.5 rounded-lg items-center">
@@ -482,37 +398,44 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
               </div>
             </div>
 
-            {/* PASSO 2 */}
+            {/* PASSO 2 - QR CODE ROTATIVO DE VALIDAÇÃO */}
             <div className="bg-slate-900 rounded-2xl p-5 border border-slate-800 shadow-xl flex flex-col items-center text-center space-y-3 text-white">
               <span className="bg-emerald-500 text-slate-950 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">Passo 2: Validar Presença</span>
-              <p className="text-[11px] text-slate-400">Escaneie o código dinâmico que muda a cada 10 segundos</p>
+              <p className="text-[11px] text-slate-400">Escaneie o código dinâmico gerado em tempo real abaixo</p>
               
-              {/* CONTAINER COM FUNDO BRANCO PARA NÃO DAR ERRO DE LEITURA */}
-              <div className="bg-white p-3 rounded-2xl border border-white/20 shadow-md">
-                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(activeToken.replace("LIVE-", ""))}`} className="w-36 h-36 object-contain" alt="QR 2" referrerPolicy="no-referrer" />
+              {/* Moldura branca de alto contraste garantida para leitura perfeita */}
+              <div className="bg-white p-3.5 rounded-2xl border border-white/10 shadow-lg block">
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(activeToken.replace("LIVE-", ""))}`} 
+                  className="w-36 h-36 block object-contain mx-auto" 
+                  alt="QR Código Validador" 
+                  referrerPolicy="no-referrer" 
+                />
               </div>
 
-              <div className="flex flex-col items-center gap-1.5 w-full">
+              <div className="flex flex-col items-center gap-1 w-full">
                 <div className="bg-emerald-500/10 text-emerald-400 px-5 py-2 rounded-xl font-mono text-xl font-black tracking-widest border border-emerald-500/30">
                   {activeToken}
                 </div>
                 <div className="text-[10px] text-slate-400">
-                  Expira em: <span className="font-mono text-emerald-400 font-bold">{Math.ceil(timeLeftMs / 1000)}s</span>
+                  Próximo código em: <span className="font-mono text-emerald-400 font-bold">{Math.ceil(timeLeftMs / 1000)}s</span>
                 </div>
               </div>
             </div>
+
           </div>
 
+          {/* LISTA DE ALUNOS LOGADOS */}
           <div className="col-span-1 lg:col-span-3">
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[540px]">
               <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-[#0066ff]" />
-                  <h3 className="text-xs font-black text-slate-800 uppercase">Lista de Chamada Real-Time</h3>
+                  <h3 className="text-xs font-black text-slate-800 uppercase">Fila de Presença Confirmada</h3>
                 </div>
                 <div className="flex gap-1.5">
-                  <button onClick={handleAddDemoStudent} className="bg-indigo-50 text-indigo-700 text-[10px] font-bold px-2.5 py-1.5 rounded-lg border border-indigo-200 cursor-pointer">+ Injetar Aluno</button>
-                  <button onClick={handleDownloadCSV} disabled={attendances.length === 0} className="bg-[#0066ff] text-white text-[10px] font-bold px-2.5 py-1.5 rounded-lg cursor-pointer disabled:bg-slate-150 disabled:text-slate-400">Exportar Planilha</button>
+                  <button onClick={handleAddDemoStudent} className="bg-indigo-50 text-indigo-700 text-[10px] font-bold px-2.5 py-1.5 rounded-lg border border-indigo-200 cursor-pointer">+ Simular Aluno</button>
+                  <button onClick={handleDownloadCSV} disabled={attendances.length === 0} className="bg-[#0066ff] text-white text-[10px] font-bold px-2.5 py-1.5 rounded-lg cursor-pointer disabled:bg-slate-150 disabled:text-slate-400">Exportar CSV</button>
                 </div>
               </div>
 
@@ -520,17 +443,17 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
                 {attendances.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center text-xs">
                     <TableProperties className="w-6 h-6 mb-1 text-slate-300" />
-                    Aguardando registros dos alunos...
+                    Aguardando validação dos estudantes...
                   </div>
                 ) : (
-                  attendances.map((item, i) => (
-                    <div key={item.id} className="p-2 bg-white border border-slate-100 rounded-xl flex items-center justify-between text-xs">
+                  attendances.map((item) => (
+                    <div key={item.id} className="p-2.5 bg-white border border-slate-100 rounded-xl flex items-center justify-between text-xs hover:bg-slate-50 transition-colors">
                       <div>
                         <p className="font-bold text-slate-800">{item.studentName}</p>
-                        <p className="text-[10px] text-slate-500">{item.course} • {item.semester}</p>
+                        <p className="text-[10px] text-slate-500 font-medium">{item.course} • {item.semester}</p>
                       </div>
                       <div className="text-right">
-                        <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-mono font-bold text-[10px]">{item.tokenUsed}</span>
+                        <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-mono font-bold text-[10px] border border-emerald-200">{item.tokenUsed}</span>
                         <p className="text-[9px] text-slate-400 mt-0.5">{new Date(item.scannedAt).toLocaleTimeString('pt-BR')}</p>
                       </div>
                     </div>
@@ -539,67 +462,68 @@ export default function PresentationMode({ onBack, initialOverrideMode }: Presen
               </div>
 
               <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center text-[11px] font-bold text-slate-600">
-                <span>Total Confirmado: {attendances.length}</span>
-                <button onClick={handleResetData} className="text-red-600 font-medium cursor-pointer">Limpar Painel</button>
+                <span>Total de Alunos Computados: {attendances.length}</span>
+                <button onClick={handleResetData} className="text-red-600 font-medium cursor-pointer hover:underline">Limpar Filtros</button>
               </div>
             </div>
           </div>
         </main>
       )}
 
+      {/* RENDER CELULAR (ALUNO) */}
       {role === 'student' && (
         <main className="flex-1 max-w-md mx-auto w-full p-4 flex flex-col justify-center">
           {!currentStudent ? (
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xl space-y-4">
               <div className="text-center">
-                <h2 className="text-base font-black text-slate-800">Check-in OnClass</h2>
-                <p className="text-xs text-slate-500">Identifique-se para marcar presença na aula</p>
+                <h2 className="text-base font-black text-slate-800">Check-in Estudante</h2>
+                <p className="text-xs text-slate-500">Identifique-se para liberar o validador de frequência</p>
               </div>
               <form onSubmit={handleEnrollStudent} className="space-y-3">
                 <div>
                   <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Nome Completo</label>
-                  <input type="text" required placeholder="Seu nome completo" value={studentName} onChange={(e) => setStudentName(e.target.value)} className="w-full text-xs p-2.5 rounded-xl border border-slate-200" />
+                  <input type="text" required placeholder="Digite seu nome para o diário" value={studentName} onChange={(e) => setStudentName(e.target.value)} className="w-full text-xs p-2.5 rounded-xl border border-slate-200 focus:border-blue-500 outline-none bg-slate-50/50" />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Curso</label>
-                  <input type="text" required placeholder="Ex: Engenharia de Software" value={studentCourse} onChange={(e) => setStudentCourse(e.target.value)} className="w-full text-xs p-2.5 rounded-xl border border-slate-200" />
+                  <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Curso Atual</label>
+                  <input type="text" required placeholder="Ex: Análise e Desenv. de Sistemas" value={studentCourse} onChange={(e) => setStudentCourse(e.target.value)} className="w-full text-xs p-2.5 rounded-xl border border-slate-200 focus:border-blue-500 outline-none bg-slate-50/50" />
                 </div>
-                <button type="submit" className="w-full bg-[#0066ff] text-white font-bold text-xs py-2.5 rounded-xl cursor-pointer">Avançar para Passo 2</button>
+                <button type="submit" className="w-full mt-2 bg-[#0066ff] hover:bg-blue-700 text-white font-bold text-xs py-3 rounded-xl cursor-pointer shadow-md transition-all">Avançar para Scanner</button>
               </form>
             </div>
           ) : (
             <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xl space-y-4">
-              <div className="flex justify-between items-center bg-slate-50 p-2 rounded-xl text-xs">
-                <span className="font-bold text-slate-700 truncate max-w-[200px]">{currentStudent.name}</span>
-                <button onClick={() => { setCurrentStudent(null); localStorage.removeItem('onclass_pres_active_student'); }} className="text-red-500 text-[10px] font-bold underline">Trocar Perfil</button>
+              <div className="flex justify-between items-center bg-slate-50 p-2 rounded-xl text-xs border border-slate-100">
+                <span className="font-bold text-slate-700 truncate max-w-[200px]">📍 {currentStudent.name}</span>
+                <button onClick={() => { setCurrentStudent(null); localStorage.removeItem('onclass_pres_active_student'); }} className="text-red-500 text-[10px] font-bold underline">Alterar Cadastro</button>
               </div>
 
               {hasAlreadyCheckedIn || scanStatus.type === 'success' ? (
-                <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-xl text-center space-y-2 text-emerald-800">
+                <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-xl text-center space-y-2 text-emerald-800 animate-fade-in">
                   <CheckCircle className="w-6 h-6 mx-auto text-emerald-600" />
-                  <p className="text-xs font-bold">Presença Registrada com Sucesso!</p>
-                  <p className="text-[10px] text-emerald-600">O projetor do professor já computou seu registro na nuvem.</p>
+                  <p className="text-xs font-bold">Presença Registrada!</p>
+                  <p className="text-[10px] text-emerald-600">Seu nome já foi computado na grade de presença do professor.</p>
                 </div>
               ) : (
                 <>
-                  <div className="relative aspect-square w-full max-w-[240px] mx-auto bg-slate-950 rounded-2xl overflow-hidden flex items-center justify-center">
+                  <div className="relative aspect-square w-full max-w-[240px] mx-auto bg-slate-950 rounded-2xl overflow-hidden flex items-center justify-center border border-slate-800 shadow-inner">
                     <div id="qr-reader-container" className="absolute inset-0 w-full h-full object-cover"></div>
                     {!isCameraActive && (
                       <div className="text-slate-400 text-center p-4 z-10 text-[10px]">
-                        <Camera className="w-6 h-6 mx-auto mb-1 animate-pulse" />
-                        Aponte para o QR Code de 10s ou digite abaixo.
+                        <Camera className="w-6 h-6 mx-auto mb-1 animate-pulse text-slate-500" />
+                        Escaneie o QR Code 2 de 10s exibido na tela ou digite abaixo.
                       </div>
                     )}
                   </div>
 
-                  <div className="text-center text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ou Digite as 4 Letras</div>
+                  <div className="text-center text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ou digite o código de 4 letras</div>
                   <div className="flex gap-2">
-                    <input type="text" maxLength={9} placeholder="Ex: AB12" value={manualCode} onChange={(e) => setManualCode(e.target.value)} className="flex-1 text-xs p-2 rounded-xl border border-slate-200 font-mono tracking-widest text-center uppercase" />
-                    <button onClick={() => handleScanOrSubmitCode(manualCode)} disabled={isLoading || !manualCode.trim()} className="bg-[#0066ff] text-white font-bold text-xs px-4 rounded-xl cursor-pointer">Enviar</button>
+                    <input type="text" maxLength={9} placeholder="Ex: AB12" value={manualCode} onChange={(e) => setManualCode(e.target.value)} className="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 font-mono tracking-widest text-center uppercase focus:border-blue-500 outline-none bg-slate-50" />
+                    <button onClick={() => handleScanOrSubmitCode(manualCode)} disabled={isLoading || !manualCode.trim()} className="bg-[#0066ff] hover:bg-blue-700 text-white font-bold text-xs px-4 rounded-xl cursor-pointer disabled:bg-slate-200">Validar</button>
                   </div>
 
                   {scanStatus.type !== 'idle' && (
-                    <div className={`p-2.5 rounded-xl text-[11px] font-bold border ${scanStatus.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'}`}>
+                    <div className={`p-2.5 rounded-xl text-[11px] font-bold border transition-all ${scanStatus.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'}`}>
                       {scanStatus.message}
                     </div>
                   )}

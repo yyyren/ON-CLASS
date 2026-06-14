@@ -20,28 +20,12 @@ interface PresentationAttendance {
   tokenUsed: string;
 }
 
+// Banco de dados em memória
 let presentationStudents: PresentationStudent[] = [];
 let presentationAttendances: PresentationAttendance[] = [];
-let currentToken = "LIVE-ON95";
-let previousToken = "";
-let lastTokenUpdate = Date.now();
 
-function generateNewToken() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; 
-  let code = "LIVE-";
-  for (let i = 0; i < 4; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-}
-
-// Rotação de token a cada 60 segundos com tolerância
-setInterval(() => {
-  previousToken = currentToken;
-  currentToken = generateNewToken();
-  lastTokenUpdate = Date.now();
-  console.log(`Token atualizado: ${currentToken}. Tolerância: ${previousToken} ainda aceito.`);
-}, 60000); 
+// CÓDIGO FIXO - Não muda mais, logo não expira
+const STATIC_TOKEN = "AULA-PRESENCA-OK"; 
 
 async function startServer() {
   const app = express();
@@ -49,7 +33,7 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Nova rota para baixar o CSV
+  // Rota para baixar o arquivo CSV de presenças
   app.get("/api/download-csv", (req, res) => {
     const header = "Nome,Curso,Semestre,Data/Hora\n";
     const rows = presentationAttendances.map(a => 
@@ -61,15 +45,10 @@ async function startServer() {
     res.send(header + rows);
   });
 
+  // Retorna o código fixo
   app.get("/api/presentation/status", (req, res) => {
-    const now = Date.now();
-    const elapsed = now - lastTokenUpdate;
-    const timeLeftMs = Math.max(0, 60000 - elapsed);
-
     res.json({
-      activeToken: currentToken,
-      previousToken: previousToken,
-      timeLeftMs: timeLeftMs,
+      activeToken: STATIC_TOKEN,
       students: presentationStudents,
       attendances: presentationAttendances,
     });
@@ -90,3 +69,50 @@ async function startServer() {
 
   app.post("/api/presentation/scan", (req, res) => {
     const { studentId, token } = req.body;
+    const student = presentationStudents.find(s => s.id === studentId);
+    
+    if (!student) return res.status(404).json({ error: "Aluno não encontrado." });
+    if (presentationAttendances.some(a => a.studentId === studentId)) {
+      return res.status(400).json({ error: "Você já registrou sua presença!" });
+    }
+
+    // Validação agora é simples: o código é sempre o estático
+    if (String(token).trim().toUpperCase() !== STATIC_TOKEN) {
+      return res.status(400).json({ error: "Código Inválido." });
+    }
+
+    presentationAttendances.unshift({
+      id: "att-" + Math.random().toString(36).substring(2, 9),
+      studentId: student.id,
+      studentName: student.name,
+      course: student.course,
+      semester: student.semester,
+      scannedAt: new Date().toISOString(),
+      tokenUsed: STATIC_TOKEN,
+    });
+
+    res.json({ success: true, message: "Presença registrada com sucesso!" });
+  });
+
+  app.post("/api/presentation/reset", (req, res) => {
+    presentationStudents = [];
+    presentationAttendances = [];
+    res.json({ success: true, message: "Histórico reiniciado!" });
+  });
+
+  // Vite middleware
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Servidor rodando em http://localhost:${PORT}`);
+  });
+}
+
+startServer();
